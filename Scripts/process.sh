@@ -1,7 +1,7 @@
 #!/bin/bash
 # Config
-BOT_TOKEN="8237515727:AAFHEJBxvRIajODU1VzKdnjjT_Wopd4Ofu4"
-CHAT_ID="1345815453"
+GATEWAY_URL="http://46.101.240.233:18789"
+GATEWAY_TOKEN="2098505848d24781e7f766169a95e66e8b3f99ddf5c5189564b1bc877d5f173a"
 AUDIO_FILE="/tmp/wavetalk_input.m4a"
 LOG_FILE="/tmp/wavetalk.log"
 SCRIPTS_DIR="/Applications/WaveTalk/Scripts"
@@ -11,14 +11,20 @@ NODE_BIN="/opt/homebrew/bin/node"
 FILE_SIZE=$(stat -f%z "$AUDIO_FILE" 2>/dev/null || stat -c%s "$AUDIO_FILE" 2>/dev/null)
 if [ -z "$FILE_SIZE" ] || [ "$FILE_SIZE" -lt 1000 ]; then exit 0; fi
 
-# 2. Transcribe (using local script in repo)
+# 2. Transcribe
 MESSAGE=$($NODE_BIN "$SCRIPTS_DIR/transcribe.js" "$AUDIO_FILE" 2>>$LOG_FILE)
 
-# 3. Send to Telegram
+# 3. Send to OpenClaw Gateway (Directly to Pi)
 if [ ! -z "$MESSAGE" ] && [ ${#MESSAGE} -gt 1 ]; then
-    curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
-         -d "chat_id=$CHAT_ID" \
-         -d "text=👤 **Ты:** $MESSAGE" \
-         -d "parse_mode=Markdown" > /dev/null
+    # Inject message into the active session
+    curl -s -X POST "$GATEWAY_URL/api/v1/messages" \
+         -H "Authorization: Bearer $GATEWAY_TOKEN" \
+         -H "Content-Type: application/json" \
+         -d "{
+               \"text\": \"$MESSAGE\",
+               \"channel\": \"telegram\",
+               \"to\": \"1345815453\"
+             }" > /dev/null
+    
     rm -f "$AUDIO_FILE"
 fi
