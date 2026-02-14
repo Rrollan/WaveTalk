@@ -2,6 +2,7 @@ import SwiftUI
 import AVFoundation
 import Cocoa
 
+// MARK: - Core Logic
 class WaveTalkState: ObservableObject {
     @Published var isRecording = false
     @Published var audioLevel: CGFloat = 0.0
@@ -27,9 +28,10 @@ class WaveTalkState: ObservableObject {
             timer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { _ in
                 self.recorder?.updateMeters()
                 let power = self.recorder?.averagePower(forChannel: 0) ?? -60
+                // Normalize level for the "liquid" height
                 let level = CGFloat(max(0, min(1.0, (power + 50) / 45)))
                 DispatchQueue.main.async {
-                    withAnimation(.interactiveSpring(response: 0.15, dampingFraction: 0.6)) {
+                    withAnimation(.interactiveSpring(response: 0.2, dampingFraction: 0.7)) {
                         self.audioLevel = level
                     }
                 }
@@ -50,6 +52,7 @@ class WaveTalkState: ObservableObject {
     }
 }
 
+// MARK: - UI Components
 struct SquircleShape: Shape {
     var curvature: Double = 4
     func path(in rect: CGRect) -> Path {
@@ -71,6 +74,42 @@ struct SquircleShape: Shape {
     }
 }
 
+struct LiquidWaveShape: Shape {
+    var level: CGFloat // 0 to 1
+    var phase: CGFloat
+    
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(level, phase) }
+        set {
+            level = newValue.first
+            phase = newValue.second
+        }
+    }
+    
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let width = rect.width
+        let height = rect.height
+        let progress = 1.0 - level
+        let midHeight = progress * height
+        let waveHeight: CGFloat = level > 0 ? 5.0 : 0.0
+        
+        path.move(to: CGPoint(x: 0, y: midHeight))
+        
+        for x in stride(from: 0, through: width, by: 1) {
+            let relativeX = x / width
+            let sine = sin(relativeX * .pi * 2 + phase)
+            let y = midHeight + sine * waveHeight
+            path.addLine(to: CGPoint(x: x, y: y))
+        }
+        
+        path.addLine(to: CGPoint(x: width, y: height))
+        path.addLine(to: CGPoint(x: 0, y: height))
+        path.closeSubpath()
+        return path
+    }
+}
+
 struct VisualEffectView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
@@ -82,36 +121,29 @@ struct VisualEffectView: NSViewRepresentable {
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
-struct WaveFiller: View {
-    let level: CGFloat
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                // Wave/Liquid fill effect
-                Rectangle()
-                    .fill(LinearGradient(colors: [Color.green.opacity(0.6), Color.green], startPoint: .top, endPoint: .bottom))
-                    .frame(height: geo.size.height * level)
-                    .offset(y: geo.size.height * (1 - level) / 2)
-                    .animation(.interpolatingSpring(stiffness: 100, damping: 10), value: level)
-            }
-        }
-    }
-}
-
 struct MainView: View {
     @ObservedObject var state: WaveTalkState
+    @State private var phase: CGFloat = 0
+    
     var body: some View {
         ZStack {
             VisualEffectView()
                 .clipShape(SquircleShape())
-                .overlay(SquircleShape().stroke(.white.opacity(0.2), lineWidth: 0.5))
+                .overlay(SquircleShape().stroke(.white.opacity(0.15), lineWidth: 0.5))
             
-            WaveFiller(level: state.audioLevel)
+            LiquidWaveShape(level: state.audioLevel, phase: phase)
+                .fill(LinearGradient(colors: [Color.green.opacity(0.5), Color.green], startPoint: .top, endPoint: .bottom))
                 .mask(SquircleShape())
+                .onAppear {
+                    withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
+                        phase = .pi * 2
+                    }
+                }
             
             Image(systemName: "mic.fill")
                 .font(.system(size: 32, weight: .bold))
-                .foregroundStyle(state.isRecording ? .white : .white.opacity(0.3))
+                .foregroundStyle(.white)
+                .opacity(state.isRecording ? 1.0 : 0.3)
                 .shadow(radius: 5)
         }
         .frame(width: 80, height: 80)
@@ -121,22 +153,39 @@ struct MainView: View {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     var state = WaveTalkState()
+    
     func applicationDidFinishLaunching(_ notification: Notification) {
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
-        window.center()
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 120, height: 120), styleMask: [.borderless], backing: .buffered, defer: false)
+        
+        // Position at bottom center
+        if let screen = NSScreen.main {
+            let x = (screen.frame.width - 120) / 2
+            let y: CGFloat = 80 // Bottom offset
+            window.setFrameOrigin(NSPoint(x: x, y: y))
+        }
+        
         window.isOpaque = false
         window.backgroundColor = .clear
         window.level = .floating
         window.ignoresMouseEvents = true
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.contentView = NSHostingView(rootView: MainView(state: state))
+        
         NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if event.modifierFlags.contains(.command) && event.keyCode == 11 {
-                DispatchQueue.main.async { self?.state.start(); self?.window.makeKeyAndOrderFront(nil) }
+                DispatchQueue.main.async {
+                    self?.state.start()
+                    self?.window.makeKeyAndOrderFront(nil)
+                }
             }
         }
         NSEvent.addGlobalMonitorForEvents(matching: .keyUp) { [weak self] event in
-            if event.keyCode == 11 { DispatchQueue.main.async { self?.state.stop(); self?.window.orderOut(nil) } }
+            if event.keyCode == 11 {
+                DispatchQueue.main.async {
+                    self?.state.stop()
+                    self?.window.orderOut(nil)
+                }
+            }
         }
         window.orderOut(nil)
     }
