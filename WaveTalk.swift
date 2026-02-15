@@ -28,10 +28,9 @@ class WaveTalkState: ObservableObject {
             timer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { _ in
                 self.recorder?.updateMeters()
                 let power = self.recorder?.averagePower(forChannel: 0) ?? -60
-                // Normalize level for the "liquid" height
                 let level = CGFloat(max(0, min(1.0, (power + 50) / 45)))
                 DispatchQueue.main.async {
-                    withAnimation(.interactiveSpring(response: 0.2, dampingFraction: 0.7)) {
+                    withAnimation(.interactiveSpring(response: 0.15, dampingFraction: 0.6)) {
                         self.audioLevel = level
                     }
                 }
@@ -45,6 +44,7 @@ class WaveTalkState: ObservableObject {
         audioLevel = 0
         timer?.invalidate()
         recorder?.stop()
+        
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/bash")
         task.arguments = ["/Applications/WaveTalk/Scripts/process.sh"]
@@ -75,7 +75,7 @@ struct SquircleShape: Shape {
 }
 
 struct LiquidWaveShape: Shape {
-    var level: CGFloat // 0 to 1
+    var level: CGFloat
     var phase: CGFloat
     
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
@@ -92,17 +92,15 @@ struct LiquidWaveShape: Shape {
         let height = rect.height
         let progress = 1.0 - level
         let midHeight = progress * height
-        let waveHeight: CGFloat = level > 0 ? 5.0 : 0.0
+        let waveHeight: CGFloat = level > 0 ? 4.0 : 0.0
         
         path.move(to: CGPoint(x: 0, y: midHeight))
-        
         for x in stride(from: 0, through: width, by: 1) {
             let relativeX = x / width
-            let sine = sin(relativeX * .pi * 2 + phase)
+            let sine = sin(relativeX * .pi * 2.5 + phase)
             let y = midHeight + sine * waveHeight
             path.addLine(to: CGPoint(x: x, y: y))
         }
-        
         path.addLine(to: CGPoint(x: width, y: height))
         path.addLine(to: CGPoint(x: 0, y: height))
         path.closeSubpath()
@@ -129,24 +127,26 @@ struct MainView: View {
         ZStack {
             VisualEffectView()
                 .clipShape(SquircleShape())
-                .overlay(SquircleShape().stroke(.white.opacity(0.15), lineWidth: 0.5))
+                .overlay(SquircleShape().stroke(.white.opacity(0.1), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
             
             LiquidWaveShape(level: state.audioLevel, phase: phase)
-                .fill(LinearGradient(colors: [Color.green.opacity(0.5), Color.green], startPoint: .top, endPoint: .bottom))
+                .fill(LinearGradient(colors: [Color.green.opacity(0.4), Color.green.opacity(0.8)], startPoint: .top, endPoint: .bottom))
                 .mask(SquircleShape())
                 .onAppear {
-                    withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) {
+                    withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
                         phase = .pi * 2
                     }
                 }
             
             Image(systemName: "mic.fill")
-                .font(.system(size: 32, weight: .bold))
+                .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(.white)
-                .opacity(state.isRecording ? 1.0 : 0.3)
-                .shadow(radius: 5)
+                .opacity(state.isRecording ? 0.9 : 0.2)
         }
-        .frame(width: 80, height: 80)
+        .frame(width: 70, height: 70)
+        .scaleEffect(state.isRecording ? 1.0 : 0.8)
+        .opacity(state.isRecording ? 1.0 : 0.0)
     }
 }
 
@@ -155,15 +155,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var state = WaveTalkState()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 120, height: 120), styleMask: [.borderless], backing: .buffered, defer: false)
-        
-        // Position at bottom center
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
         if let screen = NSScreen.main {
-            let x = (screen.frame.width - 120) / 2
-            let y: CGFloat = 80 // Bottom offset
+            let x = (screen.frame.width - 100) / 2
+            let y: CGFloat = 100
             window.setFrameOrigin(NSPoint(x: x, y: y))
         }
-        
         window.isOpaque = false
         window.backgroundColor = .clear
         window.level = .floating
@@ -171,7 +168,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.contentView = NSHostingView(rootView: MainView(state: state))
         
+        setupHotkeys()
+        window.orderOut(nil)
+    }
+    
+    func setupHotkeys() {
         NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // Cmd + B (keyCode 11)
             if event.modifierFlags.contains(.command) && event.keyCode == 11 {
                 DispatchQueue.main.async {
                     self?.state.start()
@@ -187,7 +190,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        window.orderOut(nil)
     }
 }
 
