@@ -28,7 +28,8 @@ class WaveTalkState: ObservableObject {
             timer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { _ in
                 self.recorder?.updateMeters()
                 let power = self.recorder?.averagePower(forChannel: 0) ?? -60
-                let level = CGFloat(max(0, min(1.0, (power + 50) / 45)))
+                // Higher reactivity for the wave
+                let level = CGFloat(max(0, min(1.0, (power + 45) / 35)))
                 DispatchQueue.main.async {
                     withAnimation(.interactiveSpring(response: 0.15, dampingFraction: 0.6)) {
                         self.audioLevel = level
@@ -53,29 +54,8 @@ class WaveTalkState: ObservableObject {
 }
 
 // MARK: - UI Components
-struct SquircleShape: Shape {
-    var curvature: Double = 4
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let a = rect.width / 2
-        let b = rect.height / 2
-        let centerX = rect.midX
-        let centerY = rect.midY
-        path.move(to: CGPoint(x: centerX, y: centerY - b))
-        for angle in stride(from: 0.0, through: 360.0, by: 1.0) {
-            let theta = angle * .pi / 180
-            let cosTheta = cos(theta)
-            let sinTheta = sin(theta)
-            let r = pow(pow(abs(cosTheta), curvature) + pow(abs(sinTheta), curvature), -1.0 / curvature)
-            path.addLine(to: CGPoint(x: centerX + r * a * cosTheta, y: centerY + r * b * sinTheta))
-        }
-        path.closeSubpath()
-        return path
-    }
-}
-
 struct LiquidWaveShape: Shape {
-    var level: CGFloat
+    var level: CGFloat // 0 to 1
     var phase: CGFloat
     
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
@@ -90,14 +70,16 @@ struct LiquidWaveShape: Shape {
         var path = Path()
         let width = rect.width
         let height = rect.height
-        let progress = 1.0 - level
+        
+        // Base progress (0.1 so it's always visible at bottom)
+        let progress = 1.0 - (level * 0.8 + 0.1)
         let midHeight = progress * height
-        let waveHeight: CGFloat = level > 0 ? 4.0 : 0.0
+        let waveHeight: CGFloat = 5.0
         
         path.move(to: CGPoint(x: 0, y: midHeight))
         for x in stride(from: 0, through: width, by: 1) {
             let relativeX = x / width
-            let sine = sin(relativeX * .pi * 2.5 + phase)
+            let sine = sin(relativeX * .pi * 2 + phase)
             let y = midHeight + sine * waveHeight
             path.addLine(to: CGPoint(x: x, y: y))
         }
@@ -125,26 +107,39 @@ struct MainView: View {
     
     var body: some View {
         ZStack {
+            // Glass Background
             VisualEffectView()
-                .clipShape(SquircleShape())
-                .overlay(SquircleShape().stroke(.white.opacity(0.1), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.3), radius: 10, y: 5)
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(.white.opacity(0.15), lineWidth: 0.5)
+                )
+                .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
             
+            // Animated Liquid Wave
             LiquidWaveShape(level: state.audioLevel, phase: phase)
-                .fill(LinearGradient(colors: [Color.green.opacity(0.4), Color.green.opacity(0.8)], startPoint: .top, endPoint: .bottom))
-                .mask(SquircleShape())
+                .fill(
+                    LinearGradient(
+                        colors: [Color.green.opacity(0.3), Color.green.opacity(0.7)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .mask(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .onAppear {
-                    withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                    withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
                         phase = .pi * 2
                     }
                 }
             
+            // Mic Icon
             Image(systemName: "mic.fill")
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 32, weight: .bold))
                 .foregroundStyle(.white)
-                .opacity(state.isRecording ? 0.9 : 0.2)
+                .opacity(state.isRecording ? 1.0 : 0.2)
+                .blendMode(.overlay)
         }
-        .frame(width: 70, height: 70)
+        .frame(width: 80, height: 80)
         .scaleEffect(state.isRecording ? 1.0 : 0.8)
         .opacity(state.isRecording ? 1.0 : 0.0)
     }
@@ -158,7 +153,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
         if let screen = NSScreen.main {
             let x = (screen.frame.width - 100) / 2
-            let y: CGFloat = 100
+            let y: CGFloat = 120
             window.setFrameOrigin(NSPoint(x: x, y: y))
         }
         window.isOpaque = false
